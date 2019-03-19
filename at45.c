@@ -70,8 +70,8 @@ struct {
 #define DEF_SPI_CMD(cmd, snd, rcv) \
 	struct spi_ioc_transfer cmd[2] = { \
 		{ \
-			.tx_buf = (uint64_t)(snd), \
-			.rx_buf = (uint64_t)NULL, \
+			.tx_buf = (uintptr_t)(snd), \
+			.rx_buf = (uintptr_t)NULL, \
 			.len = sizeof(snd), \
 			.tx_nbits = CHAR_BIT * sizeof(snd), \
 			.rx_nbits = 0, \
@@ -79,8 +79,8 @@ struct {
 			.speed_hz = SPI_SPEED_HZ \
 		}, \
 		{ \
-			.tx_buf = (uint64_t)NULL, \
-			.rx_buf = (uint64_t)(rcv), \
+			.tx_buf = (uintptr_t)NULL, \
+			.rx_buf = (uintptr_t)(rcv), \
 			.len = sizeof(rcv), \
 			.tx_nbits = 0, \
 			.rx_nbits = CHAR_BIT * sizeof(rcv), \
@@ -123,8 +123,8 @@ bool at45_set_page_sz(int fd, uint8_t page_sz)
 	uint8_t send_data[4] = { AT45_SET_PAGE_SZ, 0 };
 	struct spi_ioc_transfer cmd[1] = {
 		{
-			.tx_buf = (uint64_t)send_data,
-			.rx_buf = (uint64_t)NULL,
+			.tx_buf = (uintptr_t)send_data,
+			.rx_buf = (uintptr_t)NULL,
 			.len = sizeof(send_data),
 			.tx_nbits = CHAR_BIT * sizeof(send_data),
 			.rx_nbits = 0,
