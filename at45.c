@@ -33,7 +33,7 @@ struct {
 	char *name;
 } chips[] = {
 	0x0100241F, "Adesto AT45DB041E",
-	0, "" /* End of chips */
+	0, NULL /* End of chips */
 };
 
 struct {
@@ -159,6 +159,7 @@ int main(int argc, char *argv[])
 	id = get_jedec_id(fd);
 
 	for (i = 0; chips[i].name; ++i) {
+		printf("Checking %s...\n", chips[i].name);
 		if (chips[i].jedec_id == id) {
 			printf("Found %s\n", chips[i].name);
 			break;
@@ -167,6 +168,7 @@ int main(int argc, char *argv[])
 
 	if (!chips[i].name) {
 		printf("No supported chips found (id = 0x%08X)\n", id);
+		return EXIT_FAILURE;
 	}
 
 	if (argc > 1) {
