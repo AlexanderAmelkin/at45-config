@@ -17,6 +17,8 @@
 #include <string.h>
 #include <limits.h>
 
+#include <getopt.h>
+
 #define JEDEC_ID_CMD 0x9F
 #define AT45_STATUS_CMD 0xD7
 #define AT45_PAGE_256 0xA6
@@ -27,6 +29,8 @@
 #define SPI_XFER(arr) SPI_IOC_MESSAGE(ARRAY_SZ(arr)), (arr)
 
 #define SPI_SPEED_HZ 40000000
+#define DEFAULT_SPIDEV "/dev/spidev0.0"
+#define SPI_CMD_DELAY 100000
 
 struct {
 	uint32_t jedec_id;
@@ -71,89 +75,106 @@ struct {
 	struct spi_ioc_transfer cmd[2] = { \
 		{ \
 			.tx_buf = (uintptr_t)(snd), \
-			.rx_buf = (uintptr_t)NULL, \
+			.rx_buf = (uintptr_t)(rcv), \
 			.len = sizeof(snd), \
 			.tx_nbits = CHAR_BIT * sizeof(snd), \
-			.rx_nbits = 0, \
-			.cs_change = 0, \
-			.speed_hz = SPI_SPEED_HZ \
-		}, \
-		{ \
-			.tx_buf = (uintptr_t)NULL, \
-			.rx_buf = (uintptr_t)(rcv), \
-			.len = sizeof(rcv), \
-			.tx_nbits = 0, \
 			.rx_nbits = CHAR_BIT * sizeof(rcv), \
-			.cs_change = 0, \
+			.cs_change = 1, \
 			.speed_hz = SPI_SPEED_HZ \
 		} \
+	}
+
+#define DO_XFER(cmd, rval) \
+	if (0 > ioctl(fd, SPI_XFER(cmd))) { \
+		perror(__func__); \
+		return (rval); \
 	}
 
 
 uint32_t get_jedec_id(int fd)
 {
-	uint8_t send_data[1] = { JEDEC_ID_CMD };
-	uint8_t recv_data[5] = { 0 };
+	uint8_t send_data[6] = { JEDEC_ID_CMD };
+	uint8_t recv_data[6] = { 0 };
 	DEF_SPI_CMD(jedec_id, send_data, recv_data);
+	DO_XFER(jedec_id, UINT32_MAX);
 
-	if (0 > ioctl(fd, SPI_XFER(jedec_id))) {
-		perror(__func__);
-		return UINT32_MAX;
-	}
-
-	return *(uint32_t *)recv_data;
+	return *(uint32_t *)(recv_data + 1);
 }
 
 int at45_get_status(int fd)
 {
-	uint8_t send_data[1] = { AT45_STATUS_CMD };
-	uint8_t recv_data[2] = { 0 };
+	uint8_t send_data[3] = { AT45_STATUS_CMD };
+	uint8_t recv_data[3] = { 0 };
 	DEF_SPI_CMD(status, send_data, recv_data);
+	DO_XFER(status, -1);
 
-	if (0 > ioctl(fd, SPI_XFER(status))) {
-		perror(__func__);
-		return -1;
-	}
-
-	return *(uint16_t *)recv_data;
+	return *(uint16_t *)(recv_data + 1);
 }
 
 bool at45_set_page_sz(int fd, uint8_t page_sz)
 {
 	uint8_t send_data[4] = { AT45_SET_PAGE_SZ, 0 };
-	struct spi_ioc_transfer cmd[1] = {
-		{
-			.tx_buf = (uintptr_t)send_data,
-			.rx_buf = (uintptr_t)NULL,
-			.len = sizeof(send_data),
-			.tx_nbits = CHAR_BIT * sizeof(send_data),
-			.rx_nbits = 0,
-			.cs_change = 0,
-			.speed_hz = SPI_SPEED_HZ
-		},
-	};
+	uint8_t recv_data[4] = { 0 }; /* Ignore */
+	DEF_SPI_CMD(set_page_sz, send_data, recv_data);
 	send_data[3] = page_sz;
+	DO_XFER(set_page_sz, true);
 
-	if (0 > ioctl(fd, SPI_XFER(cmd))) {
-		perror(__func__);
-		return false;
-	}
-
-	return true;
+	return false;
 }
 
 int main(int argc, char *argv[])
 {
-	int fd = open("/dev/spidev0.0", O_RDWR);
-
-
-	int ret = 0;
+	int fd;
+	int ret = EXIT_FAILURE;
 	int id;
 	int i;
+	int opt;
+	char *devname = DEFAULT_SPIDEV; /* Default is SPI0 CS0 */
+	int pagesize = 0; /* Don't set page size by default */
+	bool show_status;
+	struct option options[] = {
 
+		{ "spidev", true, NULL, 'd' },
+		{ "pagesize", true, NULL, 'p' },
+		{ "status", false, NULL, 's' },
+		{ "help", false, NULL, 'h' },
+
+	};
+
+	while ((opt = getopt_long(argc, argv, "d:p:sh", options, &i)) != -1) {
+		switch (opt) {
+		case 'd':
+			devname = optarg;
+			break;
+		case 'p':
+			if (!strcmp(optarg, "256")) {
+				pagesize = AT45_PAGE_256;
+			}
+			else {
+				pagesize = AT45_PAGE_264;
+			}
+			break;
+		case 's':
+			show_status = true;
+			break;
+		case 'h':
+			ret = EXIT_SUCCESS;
+			/* fall through */
+		default:
+			printf("Usage: %s [<options>]\n", argv[0]);
+			printf("\tOptions:\n");
+			printf("\t\t--spidev, -d <device>  - Use <device>, default is %s\n",
+			       DEFAULT_SPIDEV);
+			printf("\t\t--help, -h             - Show this help\n");
+			goto out;
+		}
+	}
+
+	printf("Using device %s\n", devname);
+	fd = open(devname, O_RDWR);
 	if (fd < 0) {
 		perror("open");
-		return EXIT_FAILURE;
+		goto out;
 	}
 
 	id = get_jedec_id(fd);
@@ -168,31 +189,36 @@ int main(int argc, char *argv[])
 
 	if (!chips[i].name) {
 		printf("No supported chips found (id = 0x%08X)\n", id);
-		return EXIT_FAILURE;
+		goto out;
 	}
 
-	if (argc > 1) {
-		if (!strcmp(argv[1], "-256")) {
-			ret = at45_set_page_sz(fd, AT45_PAGE_256);
-		}
-		else {
-			ret = at45_set_page_sz(fd, AT45_PAGE_264);
-		}
-		if (!ret) {
+	if (pagesize) {
+		bool err;
+		err = at45_set_page_sz(fd, pagesize);
+		if (err) {
 			printf("Failed to set page size\n");
+			goto out;
+		}
+		/* Wait to let subsequent status request show the change */
+		usleep(SPI_CMD_DELAY);
+	}
+
+	if (show_status) {
+		int status = at45_get_status(fd);
+		if (status < 0) {
+			printf("Failed to get status\n");
+			goto out;
+		}
+
+		printf("Status: %04X\n", status);
+		for (i = 15; i >= 0; --i) {
+			bool value = (status >> i) & 1;
+			printf("\t[%02d]: %d = %s\n",
+			       i, value, status_bits[i].descr[value]);
 		}
 	}
 
-	int status = at45_get_status(fd);
-	if (status < 0) {
-		printf("Failed to get status\n");
-		return EXIT_FAILURE;
-	}
-
-	printf("Status: %04X\n", status);
-	for (i = 15; i >= 0; --i) {
-		bool value = (status >> i) & 1;
-		printf("\t[%02d]: %d = %s\n",
-		       i, value, status_bits[i].descr[value]);
-	}
+	ret = EXIT_SUCCESS;
+out:
+	return ret;
 }
